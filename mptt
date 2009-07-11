@@ -9,7 +9,23 @@ use Encode;
 binmode STDOUT, ":utf8";
 
 my %options = ();
-getopts("a:b:y:g:s:d:iouvz",\%options) or die "wrong options\n";
+getopts("a:b:y:g:s:d:iouvzh",\%options) or usage();
+
+sub usage {
+    print "usage: mptt [-abygsdzu]\n";
+    print "  -a  set artist name\n";
+    print "  -b  set album name\n";
+    print "  -y  set year\n";
+    print "  -g  set genre\n";
+    print "  -d  set disk\n";
+    print "  -z  convert gbk to utf8\n";
+    print "  -s  perl snippet for tidy up the tags\n";
+    print "  -u  update now\n";
+    print "  -h  show this help\n";
+    exit(0);
+}
+usage() if $options{'h'};
+
 
 # where we are
 my $pwd = dir('.')->absolute;
