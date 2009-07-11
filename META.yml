@@ -1,0 +1,27 @@
+---
+abstract: "tidy the mp3 file's tag "
+author:
+  - 'chunzi <chunzi@gmail.com>'
+build_requires:
+  ExtUtils::MakeMaker: 6.42
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
+distribution_type: module
+generated_by: 'Module::Install version 0.91'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: mptt
+no_index:
+  directory:
+    - inc
+requires:
+  Encode: 0
+  Getopt::Std: 0
+  MP3::Tag: 0
+  Path::Class: 0
+  perl: 5.8.1
+resources:
+  license: http://dev.perl.org/licenses/
+version: undef
