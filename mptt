@@ -5,6 +5,8 @@ use 5.008001;
 use MP3::Tag;
 use Path::Class;
 use Getopt::Std;
+use YAML::Syck;
+use File::Basename;
 use Encode;
 binmode STDOUT, ":utf8";
 
@@ -48,6 +50,23 @@ if ( $options{'z'} ){
     }
 }
 
+# meta
+my $meta_file = $pwd->file('meta.yaml');
+if ( -f $meta_file ){
+    my $meta = LoadFile( $meta_file );
+    map {
+        my $filename = basename $_->{'path'};
+        my ( $song ) = grep { $_->{'filename'} eq $filename }  @{$meta->{'songs'}};
+        if ( $song ){
+            $_->{'album'} = iconv( $meta->{'album'}, 'utf8' );
+            $_->{'artist'} = iconv( $meta->{'artist'}, 'utf8' );
+            $_->{'title'} = iconv( $song->{'title'}, 'utf8' );
+            $_->{'track'} = $song->{'track'};
+        }
+    } @mp3;
+}
+
+
 # default show tidy meta
 # if give -o then show original - untouched
 unless ( $options{'o'} ){
@@ -72,6 +91,7 @@ if ( $options{'u'} ){
     if ( -f $coverfile ){
         $cover = do { my $f; open $f, '<', "$coverfile" and binmode $f or die; undef $/; <$f>};
         print "cover.jpg loaded\n";
+    
     } 
     map { update($_, $cover) } @mp3;
 }
@@ -185,8 +205,8 @@ sub path2mp3 {
 
 sub tidy {
     my $mp3 = shift;
-    $mp3->{'artist'} = $options{'a'} if $options{'a'};
-    $mp3->{'album'} = $options{'b'} if $options{'b'};
+    $mp3->{'artist'} = iconv( $options{'a'}, 'utf8') if $options{'a'};
+    $mp3->{'album'} = iconv( $options{'b'}, 'utf8') if $options{'b'};
     $mp3->{'year'} = $options{'y'} if $options{'y'};
     $mp3->{'genre'} = $options{'g'} if $options{'g'};
 
