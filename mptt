@@ -44,7 +44,7 @@ my $total_track = scalar @mp3;
 # iconv
 if ( $options{'z'} ){
     foreach my $mp3 ( @mp3 ){
-        foreach my $k ( qw/artist album title/ ){
+        foreach my $k ( qw/artist album title year genre/ ){
             $mp3->{$k} = iconv( $mp3->{$k}, 'gbk' ); 
         }
     }
