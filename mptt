@@ -60,6 +60,7 @@ if ( -f $meta_file ){
         if ( $song ){
             $_->{'album'} = iconv( $meta->{'album'}, 'utf8' );
             $_->{'artist'} = iconv( $meta->{'artist'}, 'utf8' );
+            $_->{'year'} = iconv( $meta->{'year'}, 'utf8' );
             $_->{'title'} = iconv( $song->{'title'}, 'utf8' );
             $_->{'track'} = $song->{'track'};
         }
