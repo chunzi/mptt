@@ -20,15 +20,16 @@ my %options = ();
 GetOptions(
     "quite|q"    => \$options{"quite"},
     "diff|f"     => \$options{"diff"},
-    "simple"     => \$options{"simple"},
+    "simple|s"   => \$options{"simple"},
     "artist|a=s" => \$options{"artist"},
     "album|b=s"  => \$options{"album"},
     "year|y=i"   => \$options{"year"},
-    "genre|g=i"  => \$options{"genre"},
+    "genre|g=s"  => \$options{"genre"},
     "disk|d=i"   => \$options{"disk"},
     "various|v"  => \$options{"various"},
     "iconv|i=s"  => \$options{"iconv"},
-    "gbk|k"      => \$options{"gbk"},
+    "gbk"        => \$options{"gbk"},
+    "big5"       => \$options{"big5"},
     "eval|e=s"   => \$options{"eval"},
     "update|u"   => \$options{"update"},
     "help|h"     => \$options{"help"},
@@ -96,6 +97,7 @@ if ( -f $meta_file ){
 if ( $options{'gbk'} || $options{'big5'} || $options{'iconv'} ){
     my $charset = 'utf-8';
     $charset = 'gbk' if $options{'gbk'};
+    $charset = 'big5' if $options{'big5'};
     $charset = $options{'iconv'} if $options{'iconv'};
     foreach my $mp3 ( @mp3 ){
         foreach my $k ( qw/artist album title year genre/ ){
