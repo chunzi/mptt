@@ -2,147 +2,194 @@
 use strict;
 use warnings;
 use 5.008001;
+use Getopt::Long;
+use Pod::Usage;
 use MP3::Tag;
 use Path::Class;
-use Getopt::Std;
 use YAML::Syck;
 use File::Basename;
 use Encode;
+use Data::Dumper;
+use Image::Size;
+use Lingua::ZH::HanConvert qw/ simple /;
+use File::Copy;
 binmode STDOUT, ":utf8";
+our $VERSION = '0.02';
 
 my %options = ();
-getopts("a:b:y:g:s:d:iouvzh",\%options) or usage();
+GetOptions(
+    "quite|q"    => \$options{"quite"},
+    "diff|f"     => \$options{"diff"},
+    "simple"     => \$options{"simple"},
+    "artist|a=s" => \$options{"artist"},
+    "album|b=s"  => \$options{"album"},
+    "year|y=i"   => \$options{"year"},
+    "genre|g=i"  => \$options{"genre"},
+    "disk|d=i"   => \$options{"disk"},
+    "various|v"  => \$options{"various"},
+    "iconv|i=s"  => \$options{"iconv"},
+    "gbk|k"      => \$options{"gbk"},
+    "eval|e=s"   => \$options{"eval"},
+    "update|u"   => \$options{"update"},
+    "help|h"     => \$options{"help"},
+) or pod2usage(2);
+pod2usage(1) if $options{"help"};
 
-sub usage {
-    print "usage: mptt [-abygsdzu]\n";
-    print "  -a  set artist name\n";
-    print "  -b  set album name\n";
-    print "  -y  set year\n";
-    print "  -g  set genre\n";
-    print "  -d  set disk\n";
-    print "  -z  convert gbk to utf8\n";
-    print "  -s  perl snippet for tidy up the tags\n";
-    print "  -u  update now\n";
-    print "  -h  show this help\n";
-    exit(0);
-}
-usage() if $options{'h'};
-
-
-# where we are
+#-------------------------------------
+# read current directory
 my $pwd = dir('.')->absolute;
+my @files = $pwd->children;
 
-# get the mp3 meta info
-my @mp3 = from_pwd();
-if ( $options{'i'} ){
-    my @mp3_from_stdin = from_stdin();
-    append_path_by_track(\@mp3_from_stdin, \@mp3);
-    @mp3 = @mp3_from_stdin;
+# rename .m3u as .m3u.no
+# don't want itune read from this useless list
+map { move( $_, $_.'.no' ) } grep { /\.m3u$/i } @files;
+
+# all the mp3 files found
+my @mp3 = map { path2mp3("$_") } grep { /\.mp3$/i } @files;
+my $total_tracks = scalar @mp3;
+
+# jpeg files may use as cover.jpg
+my @jpg = grep { /\.jpe?g$/i } @files;
+my $cover = $pwd->file('cover.jpg');
+( $cover ) = grep { /(?:cover|front|thumb)/i } @jpg unless -f $cover;
+$cover = shift @jpg if not defined $cover or not -f $cover;
+
+my $meta_file = $pwd->file('meta.yaml');
+
+
+#-------------------------------------
+unless ( $options{'quite'} ){
+    printf "# pwd: %s\n", decode_utf8( $pwd );
+    printf "# found: meta.yaml\n" if -f $meta_file;
+    if ( defined $cover and -f $cover ){
+        my ( $width, $height ) = imgsize("$cover");
+        printf "# cover: %s - %dx%d\n", $cover->basename, $width, $height;
+    }
+    #map { printf "%s\n", $_->{'name'} } @mp3;
+    print "\n";
 }
-my $total_track = scalar @mp3;
 
-# iconv
-if ( $options{'z'} ){
-    foreach my $mp3 ( @mp3 ){
-        foreach my $k ( qw/artist album title year genre/ ){
-            $mp3->{$k} = iconv( $mp3->{$k}, 'gbk' ); 
+
+#-------------------------------------
+if ( $options{'diff'} ){
+    print "# old meta\n";
+    show(@mp3);
+    print "\n# new meta\n";
+}
+
+
+#-------------------------------------
+if ( -f $meta_file ){
+    local $YAML::Syck::ImplicitUnicode = 1;
+    my $meta = LoadFile( $meta_file );
+    foreach my $mp3 ( @mp3 ) {
+        my ( $song ) = grep { $_->{'filename'} eq $mp3->{'name'} }  @{$meta->{'songs'}};
+        if ( $song ){
+            map { $mp3->{$_} = $meta->{$_} } qw/ artist album year /;
+            map { $mp3->{$_} = $song->{$_} } qw/ title track /;
         }
     }
 }
 
-# meta
-my $meta_file = $pwd->file('meta.yaml');
-if ( -f $meta_file ){
-    my $meta = LoadFile( $meta_file );
-    map {
-        my $filename = basename $_->{'path'};
-        my ( $song ) = grep { $_->{'filename'} eq $filename }  @{$meta->{'songs'}};
-        if ( $song ){
-            $_->{'album'} = iconv( $meta->{'album'}, 'utf8' );
-            $_->{'artist'} = iconv( $meta->{'artist'}, 'utf8' );
-            $_->{'year'} = iconv( $meta->{'year'}, 'utf8' );
-            $_->{'title'} = iconv( $song->{'title'}, 'utf8' );
-            $_->{'track'} = $song->{'track'};
+#-------------------------------------
+# convert the charset encodings
+if ( $options{'gbk'} || $options{'big5'} || $options{'iconv'} ){
+    my $charset = 'utf-8';
+    $charset = 'gbk' if $options{'gbk'};
+    $charset = $options{'iconv'} if $options{'iconv'};
+    foreach my $mp3 ( @mp3 ){
+        foreach my $k ( qw/artist album title year genre/ ){
+            $mp3->{$k} = iconv( $mp3->{$k}, $charset ); 
         }
+    }
+}
+
+
+#-------------------------------------
+map { $_->{'year'} = $options{'year'} } @mp3 if $options{'year'};
+map { $_->{'genre'} = $options{'genre'} } @mp3 if $options{'genre'};
+
+if ( $options{'artist'} ){
+    my $artist = decode_utf8( $options{'artist'} );
+    map { $_->{'artist'} = $artist } @mp3;
+}
+
+if ( $options{'album'} ){
+    my $album = decode_utf8( $options{'album'} );
+    map { $_->{'album'} = $album } @mp3;
+}
+
+if ( $options{'eval'} ){
+    my $eval = $options{'eval'};
+    $eval =~ s/\#a\b/\$_->{'artist'} /g;
+    $eval =~ s/\#b\b/\$_->{'album'} /g;
+    $eval =~ s/\#t\b/\$_->{'title'} /g;
+    $eval =~ s/\#k\b/\$_->{'track'} /g;
+    map { 
+        eval $eval;
+        die "eval failed: $@\n" if $@;
     } @mp3;
 }
 
-
-# default show tidy meta
-# if give -o then show original - untouched
-unless ( $options{'o'} ){
-    @mp3 = map{ tidy($_) } @mp3;
+if ( $options{'simple'} ){
+    foreach my $mp3 ( @mp3 ){
+        map { $mp3->{$_} = simple( $mp3->{$_} ) }
+            qw/ artist album title /;
+    }
 }
 
-# list the tracks
-my $max = max_length( \@mp3 );
-my @cols = qw( artist album track title year genre);
-my $format = sprintf "%%-%ds # %%-%ds # %%%ds # %%-%ss # %%-%ds # %%-%ds\n", map { $max->{$_} } @cols;
-foreach my $mp3 ( @mp3 ){
-    printf $format, map { ( not defined $_ or $_ eq '' ) ? '-' : $_ }
-        $mp3->{'artist'}, $mp3->{'album'}, $mp3->{'track'}, $mp3->{'title'}, $mp3->{'year'}, $mp3->{'genre'};
-}
+# attach total tracks as '3/12'
+map {
+    my ( $t1, $t2 ) = split(/\//, $_->{'track'});
+    $_->{'track'} = join('/', $t1+0, $total_tracks);
+} @mp3;
 
 
+#-------------------------------------
+show(@mp3);
+
+
+#-------------------------------------
 # update tag
-if ( $options{'u'} ){
+if ( $options{'update'} ){
     print "\n";
-    my $cover; 
-    my $coverfile = $pwd->file('cover.jpg');
-    if ( -f $coverfile ){
-        $cover = do { my $f; open $f, '<', "$coverfile" and binmode $f or die; undef $/; <$f>};
-        print "cover.jpg loaded\n";
-    
+    if ( -f $cover ){
+        $cover = do { my $f; open $f, '<', "$cover" and binmode $f or die; undef $/; <$f>};
     } 
     map { update($_, $cover) } @mp3;
 }
-
 exit(0);
 
 
-# functions below
-sub from_stdin {
-    my @mp3;
-    while(<>){
-        chomp;
-        my $mp3 = {};
-        if ( /#/ ){
-            my @cols = map { s/^\s+|\s+$//g; $_ } split(/\#/, $_);
-            $mp3->{'artist'} = $cols[0];
-            $mp3->{'album'} = $cols[1];
-            $mp3->{'track'} = $cols[2];
-            $mp3->{'title'} = $cols[3];
-            $mp3->{'year'} = $cols[4];
-            $mp3->{'genre'} = $cols[5];
-        }else{
-            my @cols = map { s/^\s+|\s+$//g; $_ } split(/\s+/, $_, 2);
-            my ( $t1, $t2 ) = split(/\//, $cols[0]);
-            $t1 =~ s/\D//g;
-            $t1 += 0;
-            $mp3->{'track'} = $t1;
-            $mp3->{'title'} = $cols[1]; 
-        }
-        push @mp3, $mp3;
-    }
-    return @mp3;
+
+#-------------------------------------
+
+sub path2mp3 {
+    my $path = shift;
+
+    my $mt = MP3::Tag->new( $path );
+    $mt->config("autoinfo","ID3v2","ID3v1","filename");
+    my ( $title, $track, $artist, $album, $comment, $year, $genre ) = $mt->autoinfo();
+    
+    my $mp3;
+    $mp3->{'path'} = $path;
+    $mp3->{'name'} = decode_utf8( file( $path )->basename );
+    $mp3->{'artist'} = $artist;
+    $mp3->{'album'} = $album;
+    $mp3->{'title'} = $title;
+    $mp3->{'year'} = $year;
+    $mp3->{'genre'} = $genre;
+    $mp3->{'track'} = $track;
+    return $mp3;
 }
 
-sub from_pwd {
-    my @mp3 = map { path2mp3("$_") } grep { /\.mp3$/i } $pwd->children;
-    return @mp3;
-}
-
-sub append_path_by_track {
-    my $mp3_from_stdin = shift;
-    my $mp3_from_pwd = shift;
-    my $tp = {};
-    foreach ( @$mp3_from_pwd ){
-        my ( $t1, $t2 ) = split(/\//, $_->{'track'} );
-        $tp->{$t1} = $_->{'path'};
-    }
-    foreach ( @$mp3_from_stdin ){
-        my ( $t1, $t2 ) = split(/\//, $_->{'track'} );
-        $_->{'path'} = $tp->{$t1};
+sub show {
+    my @mp3 = @_;
+    my $max = max_length( \@mp3 );
+    my @cols = qw( artist album year genre track title );
+    my $format = sprintf "%%-%ds - %%-%ds - %%-%ds - %%-%ds # %%%ds - %%-%ds\n", map { $max->{$_} } @cols;
+    foreach my $mp3 ( @mp3 ){
+        printf $format, map { ( not defined $_ or $_ eq '' ) ? '-' : $_ } map { $mp3->{$_} } @cols;
     }
 }
 
@@ -163,14 +210,14 @@ sub update {
 
     # new tag, 3 means 'utf-8'
     my $id3v2 = $mt->new_tag('ID3v2');
-    if ( $options{'v'} ){
+    if ( $options{'various'} ){
         $id3v2->add_frame("TPE1", 3, $mp3->{'artist'}); # artist
         $id3v2->add_frame("TPE2", 3, 'Various Artists'); # album artist
     }else{
         $id3v2->add_frame("TPE2", 3, $mp3->{'artist'}); # album artist
     }
-    if ( $options{'d'} ){
-        $id3v2->add_frame("TPOS", 3, $options{'d'});
+    if ( $options{'disk'} ){
+        $id3v2->add_frame("TPOS", 3, $options{'disk'});
     }
     $id3v2->add_frame("TALB", 3, $mp3->{'album'});
     $id3v2->add_frame("TRCK", 3, $mp3->{'track'});
@@ -183,52 +230,7 @@ sub update {
     # save
     $id3v2->write_tag;
     $mt->close;
-    printf "U %s\n", $mp3->{'path'};
-}
-
-
-sub path2mp3 {
-    my $path = shift;
-
-    my $mt = MP3::Tag->new($path);
-    $mt->config("autoinfo","ID3v2","ID3v1","filename");
-    my ( $title, $track, $artist, $album, $comment, $year, $genre ) = $mt->autoinfo();
-    
-    my $mp3 = { path => $path };
-    $mp3->{'title'} = $title;
-    $mp3->{'track'} = $track;
-    $mp3->{'artist'} = $artist;
-    $mp3->{'album'} = $album;
-    $mp3->{'year'} = $year;
-    $mp3->{'genre'} = $genre;
-    return $mp3;
-}
-
-sub tidy {
-    my $mp3 = shift;
-    $mp3->{'artist'} = iconv( $options{'a'}, 'utf8') if $options{'a'};
-    $mp3->{'album'} = iconv( $options{'b'}, 'utf8') if $options{'b'};
-    $mp3->{'year'} = $options{'y'} if $options{'y'};
-    $mp3->{'genre'} = $options{'g'} if $options{'g'};
-
-    if ( $options{'s'} ){
-        my $eval = $options{'s'};
-        $eval =~ s/\#p\b/\$mp3->{'path'} /g;
-        $eval =~ s/\#a\b/\$mp3->{'artist'} /g;
-        $eval =~ s/\#b\b/\$mp3->{'album'} /g;
-        $eval =~ s/\#k\b/\$mp3->{'track'} /g;
-        $eval =~ s/\#t\b/\$mp3->{'title'} /g;
-        $eval =~ s/\#y\b/\$mp3->{'year'} /g;
-        $eval =~ s/\#g\b/\$mp3->{'genre'} /g;
-        eval $eval;
-        die "eval failed: $@\n" if $@;
-    }
-
-    my ( $t1, $t2 ) = split(/\//, $mp3->{'track'});
-    $t1 += 0;
-    $mp3->{'track'} = join('/', $t1, $total_track);
-
-    return $mp3;
+    printf "U %s\n", $mp3->{'name'};
 }
 
 sub max_length {
