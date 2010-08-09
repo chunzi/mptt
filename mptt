@@ -25,7 +25,7 @@ GetOptions(
     "album|b=s"  => \$options{"album"},
     "year|y=i"   => \$options{"year"},
     "genre|g=s"  => \$options{"genre"},
-    "disk|d=i"   => \$options{"disk"},
+    "disk|d=s"   => \$options{"disk"},
     "various|v"  => \$options{"various"},
     "iconv|i=s"  => \$options{"iconv"},
     "gbk"        => \$options{"gbk"},
