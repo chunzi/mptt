@@ -1,0 +1,59 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+our $VERSION = '0.03';
+
+use File::Copy::Recursive qw/ dircopy /;
+use File::HomeDir;
+use Getopt::Long::Descriptive;
+use Path::Class;
+use Term::ANSIColor qw/ :constants /;
+
+local $Term::ANSIColor::AUTORESET = 1;
+
+#--------------------------------------------------------------------------------
+# 从指定 Albums 目录中随机抽取几张专辑，导入 Music 本地存档中
+my $default_from = "/Volumes/1TB/Music";
+my $auto         = dir( File::HomeDir->my_home, 'Music', 'iTunes', 'iTunes Media', 'Automatically Add to Music.localized' );
+die "Target dir not found: $auto\n" unless -d $auto;
+
+#-----------------------
+# options / usages
+my ( $opt, $usage ) = describe_options(
+
+    '%c %o',
+    [ 'just=i', "number of albums to pick, default is 18" ],
+    [ 'from=s', "the music album dir, default is $default_from" ],
+    [ 'help',   "print usage message and exit" ],
+
+);
+if ( $opt->help ) { print $usage->text; exit; }
+
+#-----------------------
+# resources
+my $just = $opt->just || 18;
+my $from = dir( $opt->from || $default_from );
+die "Album dir not found: $from\n" unless -d $from;
+
+#-----------------------
+# new pick
+my @albums = grep { -d } $from->children;
+my $count  = scalar @albums;
+die "No albums found in $from\n" if $count == 0;
+
+$just = $count if $just > $count;
+my $picked;
+$picked->{ int rand( $count ) }++ while keys %$picked < $just;
+
+#-----------------------
+# copy to itunes auto add dir
+foreach my $picked ( @albums[ keys %$picked ] ) {
+    my $basename = $picked->dir_list( -1 );
+    my $target   = $auto->subdir( $basename );
+    print STDERR MAGENTA "==> ";
+    print STDERR GREEN "$basename";
+    print STDERR "\n";
+    dircopy( "$picked", "$target" );
+}
+
+exit( 0 );

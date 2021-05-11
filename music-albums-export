@@ -1,0 +1,194 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+our $VERSION = '0.02';
+
+use File::Copy;
+use File::HomeDir;
+use File::Slurp;
+use Getopt::Long::Descriptive;
+use MP3::Tag;
+use Path::Class;
+use Lingua::Han::PinYin;
+use Term::ANSIColor qw/ :constants /;
+
+local $Term::ANSIColor::AUTORESET = 1;
+
+#--------------------------------------------------------------------------------
+# 从 Music 的存档目录读取当前导入的专辑，整理复制后导出到指定目录，用于归档
+my $itunes = dir( File::HomeDir->my_home, 'Music', 'Music', 'Media.localized', 'Music' );
+die "iTuens dir not found: $itunes\n" unless -d $itunes;
+
+my $default_to = dir( File::HomeDir->my_home, 'sucked' );
+$default_to || $default_to->mkpath( 0, 0777 );
+
+#-----------------------
+# options / usages
+my ( $opt, $usage ) = describe_options(
+
+    '%c %o',
+    [ 'to=s', "the music album dir, default is $default_to" ],
+    [ 'help', "print usage message and exit" ],
+
+);
+if ( $opt->help ) { print $usage->text; exit; }
+
+#-----------------------
+# resources
+my $to = dir( $opt->to || $default_to )->resolve->absolute;
+die "Album dir not found: $to\n" unless -d $to;
+
+#-----------------------
+# read the dir/files from itunes' music directory
+# move them into target dir
+my @artists = grep { -d } $itunes->children;
+for my $artist ( @artists ) {
+    my @albums = grep { -d } $artist->children;
+
+    for my $album ( @albums ) {
+        my $name  = join( ' - ', $album->dir_list( -2, 2 ) );
+        my @files = grep { /\.mp3$/i } grep { -f } $album->children;
+        print STDERR MAGENTA "==> ";
+
+        # skip non-mp3 album
+        unless ( @files ) {
+            print STDERR RED "Skipped $name";
+            print STDERR "\n";
+            next;
+        }
+
+        # dump cover.jpg from the first mp3 file
+        my $mt    = MP3::Tag->new( $files[0] );
+        my @tags  = $mt->get_tags;
+        my $id3v2 = $mt->{'ID3v2'};
+        my $data  = $id3v2->frame_select( 'APIC', '', '' ) or die "no expected APIC frame found for $album";
+        my $cover = $album->file( 'cover.jpg' );
+        write_file( $cover->stringify, { binmode => ':raw' }, $data );
+
+        # target dir, not exist then creat, showing [A]dd
+        my $dir = $to->subdir( $name );
+
+        # duplicated albums in target dir
+        # do nothing, just notify the user
+        if ( -d $dir ) {
+            print STDERR RED "Duplicated $name";
+            print STDERR "\n";
+
+        }
+        else {
+            print STDERR GREEN "Added $name";
+            print STDERR "\n";
+
+            # build the target dir and move the files
+            $dir->mkpath;
+            map {
+                my $basename = $_->basename;
+                move( "$_", "$dir/$basename" );
+            } ( @files, $cover );
+
+            # remove the source
+            $album->remove;
+        }
+
+    }
+
+    my @remain = grep { -d } $artist->children;
+    $artist->remove unless scalar @remain;
+}
+
+build_album_index_html();
+exit( 0 );
+
+sub build_album_index_html {
+    my @albums = ();
+    my $index  = {};
+
+    my $h2p = new Lingua::Han::PinYin();
+    for ( sort $to->children ) {
+        next unless -d $_;
+        my $name = $_->dir_list( -1 );
+        my ( $artist, $album ) = split( /\s+-\s+/, $name, 2 );
+        my $cover = $_->file( 'cover.jpg' );
+        my $ref   = [ $artist, $album, $cover, $_ ];
+
+        push @albums, $ref;
+
+        my $t  = $h2p->han2pinyin( $artist );
+        my $m  = $h2p->han2pinyin( $album );
+        my $tf = substr $t, 0, 1;
+        my $mf = substr $m, 0, 1;
+
+        push @{ $index->{'by_artist'}{$tf} }, $ref;
+        push @{ $index->{'by_album'}{$mf} },  $ref;
+    }
+
+    my $html;
+    my @fi = sort keys %{ $index->{'by_artist'} };
+
+    $html .= sprintf q{
+    <html>
+    <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <title>mp3 albums</title>
+    <style>
+
+    body { background: #262626; margin: 10px; font-family: arial, verdana;  }
+    img { border: 0; }
+    .cover img { width: 100px; height: 100px; border: solid 1px #333; border-right: solid 1px #111; border-bottom: solid 1px #111; }
+    .cover { text-align: center; }
+    .album { color: #ffffff; font-size: 0.8em; display: block; text-align: center; margin-top: 10px; overflow: hidden; }
+    .artist { color: #b4ab92; font-size: 0.7em; display: block; text-align: center; overflow: hidden; }
+    table.item { width: 150px; height: 170px; float: left; margin: 10px 0; }
+    table.item td { text-align: center; }
+    .hr { clear: both; margin: 10px; border-top: solid 1px #363636; }
+    .dir { color: #b4ab92; font-size: 0.7em; margin-right: 10px; font-size: arial; float: right; }
+    table.index { float: left; margin-left: 10px; }
+    table.index td { text-align: center; }
+    a { color: #b4ab92; text-decoration: none; }
+    .idx { padding: 1px; font-size: 0.8em; color: #b4ab92;}
+    </style>
+    </head>
+    <body>
+
+    <div class="dir">%s</div>
+    }, $to;
+
+    $html .= q{<table border="0" class="index"><tr>};
+    $html .= sprintf q{<td><span class="idx">%d albums</span></td>}, scalar @albums;
+    $html .= sprintf q{<td><span class="idx"></span></td>};
+    foreach my $f ( @fi ) {
+        $html .= sprintf q{<td><span class="idx"><a href="#%s">%s</a></span></td>}, $f, uc $f;
+    }
+    $html .= q{</tr></table>};
+    $html .= q{<div class="hr"></div>};
+
+    for my $f ( @fi ) {
+        $html .= sprintf q{<a name="%s"></a>}, $f;
+        for ( @{ $index->{'by_artist'}{$f} } ) {
+            my ( $artist, $album, $cover, $path ) = @$_;
+
+            #$path =~ s/([^A-Za-z0-9])/sprintf("%%%02X", ord($1))/seg;
+            $html .= sprintf q{
+                <table class="item" border="0"><tr><td valign="top">
+                <div class="cover"><a href="file://%s"><img src="%s"/></a></div>
+                <div class="album">%s</div>
+                <div class="artist">%s</div> 
+                </td></tr></table>
+            }, $path, $cover, $album, $artist;
+        }
+        $html .= sprintf q{<div class="hr"></div>};
+
+    }
+
+    $html .= q{
+    </body></html>
+    };
+
+    my $file = $to->file( 'index.html' )->stringify;
+    write_file( $file, $html );
+
+    my $count = scalar @albums;
+    print STDERR "Total $count Albums.\n";
+    print STDERR "Updated file://$file\n";
+}
+
