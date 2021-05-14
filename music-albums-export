@@ -83,7 +83,7 @@ for my $artist ( @artists ) {
             $dir->mkpath;
             map {
                 my $basename = $_->basename;
-                move( "$_", "$dir/$basename" );
+                copy( "$_", "$dir/$basename" );
             } ( @files, $cover );
 
             # remove the source
